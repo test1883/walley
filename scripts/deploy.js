@@ -9,10 +9,12 @@ const hre = require("hardhat");
 async function main() {
   const [ deployer ] = await hre.ethers.getSigners()
   console.log("Deploying contracts with the account:", deployer.address);
-  const Wallet = await ethers.getContractFactory("Wallet");
-  const contract = await Wallet.deploy();
-
-  console.log(contract);
+  const NFT = await hre.ethers.getContractFactory("NFTManager");
+  const NFTcontract = await NFT.deploy();
+  const Walley = await hre.ethers.getContractFactory("Walley");
+  NFTcontract.getAddress().then(address => {
+    const contract = Walley.deploy(address);
+  })
   
 }
 
