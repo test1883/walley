@@ -15,14 +15,26 @@ contract NFTManager is ReentrancyGuard{
   struct NFT {
     address nftContract;
     uint256 tokenId;
+    string name;
     address payable storeAddress;
     address payable owner;
     uint256 amount;
     string store;
+    string invoice;
+    bool done;
+    uint256 totalAmount;
+    uint256 time;
   }
+  struct storeDetails {
+    string storeName;
+    address storeAddress;
+    string image;
+  }
+  storeDetails[] public stores;
   event NFTListed(
     address nftContract,
     uint256 tokenId,
+    string name,
     address storeAddress,
     address owner,
     uint256 amount,
@@ -31,55 +43,78 @@ contract NFTManager is ReentrancyGuard{
   event NFTSold(
     address nftContract,
     uint256 tokenId,
+    string name,
     address storeAddress,
     address owner,
     uint256 amount,
-    string store
+    string store,
+    string invoice,
+    uint256 totalAmount
   );
 
   constructor() payable  {
     _marketOwner = payable(msg.sender);
   }
 
-  // List the NFT on the marketplace
-  function initTransaction(address _nftContract, uint256 _tokenId, uint256 _amount, address payable _storeAddress, string memory store) public payable nonReentrant {
+  function initTransaction(address _nftContract, string memory name, uint256 _tokenId, uint256 _amount, address payable _storeAddress, string memory store) public payable nonReentrant() {
     require(_amount > 0, "Amount must be at least 1 wei");
 
-    _storeAddress.transfer(_amount);
     address payable buyer = payable(msg.sender);
     _nftCount.increment();
     _idToNFT[_tokenId] = NFT(
       _nftContract,
-      _tokenId, 
+      _tokenId,
+      name,
       _storeAddress,
       buyer,
       _amount,
-      store
+      store,
+      "",
+      false,
+      0,
+      block.timestamp
     );
 
-    emit NFTListed(_nftContract, _tokenId, _storeAddress, buyer, _amount, store);
+    emit NFTListed(_nftContract, _tokenId, name, _storeAddress, buyer, _amount, store);
   }
-  function getBalance() public view returns(uint) {
-    return address(msg.sender).balance;
-  }
-  // Resell an NFT purchased from the marketplace
-  function approveTransaction(address _nftContract, uint256 _tokenId, uint256 _amount) public payable nonReentrant {
+  function approveTransaction(address _nftContract, uint256 _tokenId, uint256 _amount, string memory invoice) public payable nonReentrant() {
     NFT storage nft = _idToNFT[_tokenId];
     require(msg.sender == nft.storeAddress, "you cannot approve the transaction");
     require(_amount > 0, "amount must be at least 1 wei");
     require(_amount <= nft.amount, "amount must be less than or equal to the value");
     uint tmp = nft.amount;
+    payable(nft.storeAddress).transfer(_amount);
     tmp-=_amount;
     payable(nft.owner).transfer(tmp);
+    nft.invoice = invoice;
+    nft.done = true;
+    nft.totalAmount = _amount;
+    nft.time = block.timestamp;
+    _idToNFT[_tokenId] = nft;
+    emit NFTSold(_nftContract, _tokenId, nft.name, nft.storeAddress, nft.owner, _amount, nft.store, invoice, _amount);
 
-    emit NFTSold(_nftContract, _tokenId, nft.storeAddress, nft.owner, _amount, nft.store);
-
-    IERC721(_nftContract).transferFrom(nft.owner,  address(bytes20(bytes("0x000000000000000"))), _tokenId);
-    delete _idToNFT[_tokenId];
+    IERC721(_nftContract).transferFrom(nft.owner,  address(bytes20(bytes("0x0000000000000000000000000000000000000000"))), _tokenId);
     
   }
 
-  function getMyActiveTransactions() public view returns (NFT[] memory) {
+  function cancelTransaction(address _nftContract, uint256 _tokenId) public payable nonReentrant() {
+    NFT storage nft = _idToNFT[_tokenId];
+    require(msg.sender == nft.owner, "you cannot cancel the transaction");
+    payable(nft.owner).transfer(nft.amount);
+    IERC721(_nftContract).transferFrom(nft.owner,  address(bytes20(bytes("0x0000000000000000000000000000000000000000"))), _tokenId);
+    delete _idToNFT[_tokenId];
+
+  }
+
+  function transferNFT(address _nftContract, uint256 _tokenId, address payable to) public payable nonReentrant() {
+    NFT storage nft = _idToNFT[_tokenId];
+    require(msg.sender == nft.owner, "you cannot transfer the nft");
+    IERC721(_nftContract).transferFrom(nft.owner,  to, _tokenId);
+    nft.time = block.timestamp;
+    nft.owner = to;
+  }
+
+  function getMyTransactions() public view returns (NFT[] memory) {
     uint nftCount = _nftCount.current();
     uint myNftCount = 0;
     for (uint i = 0; i < nftCount; i++) {
@@ -99,11 +134,11 @@ contract NFTManager is ReentrancyGuard{
     return nfts;
   }
 
-  function getStoreActiveTransactions() public view returns (NFT[] memory) {
+  function getStoreTransactions(address storeAddress) public view returns (NFT[] memory) {
     uint nftCount = _nftCount.current();
     uint storeNft = 0;
     for (uint i = 0; i < nftCount; i++) {
-      if (_idToNFT[i + 1].storeAddress == msg.sender) {
+      if (_idToNFT[i + 1].storeAddress == storeAddress) {
         storeNft++;
       }
     }
@@ -111,12 +146,36 @@ contract NFTManager is ReentrancyGuard{
     NFT[] memory nfts = new NFT[](storeNft);
     uint nftsIndex = 0;
     for (uint i = 0; i < nftCount; i++) {
-      if (_idToNFT[i + 1].storeAddress == msg.sender) {
+      if (_idToNFT[i + 1].storeAddress == storeAddress) {
         nfts[nftsIndex] = _idToNFT[i + 1];
         nftsIndex++;
       }
     }
     return nfts;
+  }
+
+  function getAllStores() public view returns (storeDetails[] memory) {
+    return stores;
+  }
+  function addStore(string memory store, address storeAddress, string memory image) public payable {
+    bool check = true;
+    storeDetails[] memory storeD = stores;
+    for (uint i = 0; i < stores.length; i++) {
+      if (storeAddress == storeD[i].storeAddress) {
+        check=false;
+        break;
+      }
+    }
+    if (check) {
+      storeDetails memory tmp = storeDetails(
+        store,
+        storeAddress,
+        image
+      );
+      stores.push(tmp);
+    } else {
+      revert("Store already exists");
+    }
   }
 }
 
