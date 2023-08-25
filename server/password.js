@@ -1,7 +1,7 @@
 const express = require('express')
 
 // controller functions
-const { addPassword, getPassword } = require('../controllers/userController')
+const { addPassword, getPassword } = require('./passwordController')
 
 const router = express.Router()
 

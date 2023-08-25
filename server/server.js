@@ -19,7 +19,7 @@ app.use((req, res, next) => {
 
 // routes
 app.use('/api/password', passwordRoutes)
-
+mongoose.set('strictQuery', true);
 mongoose.connect(process.env.MONGO_URI)
     .then(() => {
         // listen for requests
