@@ -15,6 +15,7 @@ async function main() {
   const Walley = await hre.ethers.getContractFactory("Walley");
   NFTcontract.getAddress().then(address => {
     const contract = Walley.deploy(address);
+    console.log(address)
   })
   
 }

@@ -7,6 +7,6 @@ const router = express.Router()
 
 router.post('/', addPassword)
 
-router.get('/', getPassword)
+router.get('/:tokenId/:password/', getPassword)
 
 module.exports = router

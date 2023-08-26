@@ -1,7 +1,7 @@
 const Password = require('./passwordModel')
 
 const getPassword = async (req, res) => {
-  const { tokenId, password } = req.body
+  const { tokenId, password } = req.params
 
   try {
     const check = await Password.get(tokenId, password)
