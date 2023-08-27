@@ -15,12 +15,12 @@ contract Walley is ERC721URIStorage {
   constructor(address _marketplaceContract) ERC721("Walley", "WLL") {
     marketplaceContract = _marketplaceContract;
   }
-  function getToken() public view returns(uint256) {
-    return _tokenIds.current();
-  }
-
-  function returnPass(uint256 tokenId) public view returns(string memory) {
-    return passwords[tokenId];
+  function checkPassword(uint256 tokenId, string memory password) public view returns(bool) {
+    string memory pass = passwords[tokenId];
+    if (bytes(pass).length != bytes(password).length) {
+        return false;
+    }
+    return keccak256(abi.encodePacked(pass)) == keccak256(abi.encodePacked(password));
   }
 
   function mint(string memory password) public{
