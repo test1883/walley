@@ -1,15 +1,14 @@
 const unixToDate = (time) => {
-  console.log(time);
   const d = new Date(time * 1000);
   return d.toLocaleString();
 };
 
-const nftAddress = "0x8000d0daa796df46db6a8d191ad7d56af41ae421";
+const nftAddress = "0x36efeb48a51f468131042c6e5286f8aee6424ffa";
 const NFTManagerABI = JSON.parse(
   fetch("https://raw.githubusercontent.com/test1883/files/main/NFTManager.json")
     .body
 );
-const walleyAddress = "0x150ab38996cc9694530f452caca99ad3a1387f5f";
+const walleyAddress = "0x94c604b936a3dab1e93dc19f2778d8a2d148d72d";
 const WalleyABI = JSON.parse(
   fetch("https://raw.githubusercontent.com/test1883/files/main/Walley.json")
     .body
@@ -50,7 +49,7 @@ State.init({
   storeInputs: {
     storeName: "",
     storeAddress: "",
-    image: null,
+    image: "",
   },
   search: {
     store: "",
@@ -65,10 +64,13 @@ State.init({
 });
 
 const Styles = props.Styles;
-console.log(props);
 const sender = Ethers.send("eth_requestAccounts", [])[0];
-const updateBalance = (balance) => {
-  State.update({ balance });
+const updateBalance = () => {
+  Ethers.provider()
+    .getBalance(sender)
+    .then((balance) => {
+      State.update({ balance: Big(balance).div(Big(10).pow(18)).toFixed(5) });
+    });
 };
 if (!sender) {
   return (
@@ -96,11 +98,7 @@ if (state.chainId === undefined && ethers !== undefined && sender) {
         State.update({ chainId: chainIdData.chainId });
       }
     });
-  Ethers.provider()
-    .getBalance(sender)
-    .then((balance) => {
-      updateBalance(Big(balance).div(Big(10).pow(18)).toFixed(5));
-    });
+  updateBalance();
 }
 if (state.chainId !== undefined && state.chainId !== 11155111) {
   return <p>Switch to Ethereum Sepolia</p>;
@@ -118,7 +116,7 @@ const walleyContract = new ethers.Contract(
   Ethers.provider().getSigner()
 );
 //get stores data
-if (state.store.stores.length === 0 && nftContract && sender && state.loading) {
+if (state.store.stores.length === 0 && nftContract && sender) {
   State.update({ loadingMsg: "Fetching Stores" });
   nftContract.getAllStores().then((stores) => {
     onTxInit();
@@ -131,8 +129,6 @@ if (state.store.stores.length === 0 && nftContract && sender && state.loading) {
       for (let i = 0; i < stores.length; i++) {
         store = stores[i];
         storeState.storeImages[store[0]] = store[2];
-        console.log(store[1]);
-        console.log(sender);
         if (store[1].toLowerCase() === sender.toLowerCase()) {
           storeState.isStore = true;
           storeState.storeName = store[0];
@@ -141,25 +137,31 @@ if (state.store.stores.length === 0 && nftContract && sender && state.loading) {
             loading: true,
             loadingMsg: "Fetching Store Transactions",
           });
-          nftContract.getStoreTransactions(store[1]).then((transactions) => {
-            storeState.storePendingTransactions = [];
-            storeState.storePastTransactions = [];
-            transactions.map((txn) => {
-              if (txn[8] === false) {
-                storeState.storePendingTransactions.push(txn);
-              } else {
-                storeState.storePastTransactions.push(txn);
-              }
-            });
-          });
+          storeTxn(store[1]);
         }
         if (i === stores.length - 1)
           State.update({ store: storeState, loading: false, loadingMsg: "" });
       }
-      console.log(state.store);
     }
   });
 }
+
+const storeTxn = (address) => {
+  console.log("heere");
+  const storeState = state.store;
+  nftContract.getStoreTransactions(address).then((transactions) => {
+    storeState.storePendingTransactions = [];
+    storeState.storePastTransactions = [];
+    transactions.map((txn) => {
+      if (txn[8] === false) {
+        storeState.storePendingTransactions.push(txn);
+      } else {
+        storeState.storePastTransactions.push(txn);
+      }
+      State.update({ store: storeState });
+    });
+  });
+};
 
 const onTxInit = () => {
   State.update({
@@ -206,7 +208,6 @@ const widgetOptions = () => {
       text: state.store.stores[i][0],
       value: state.store.stores[i][0],
     });
-  console.log(options);
   return options;
 };
 
@@ -217,21 +218,39 @@ const homeInputUpdates = (value, field) => {
 };
 const storeInputUpdates = (value, field) => {
   const storeInputs = state.storeInputs;
-  console.log(storeInputs);
   storeInputs[field] = value;
-  console.log(storeInputs);
   State.update({ storeInputs });
 };
 
 const addStore = () => {
+  const { storeName, storeAddress, image } = state.storeInputs;
+
+  if (storeName === "" || storeAddress === "" || image === "") {
+    props.toast("ERROR", "Note", "Please fill in all the details!");
+    return;
+  }
+  if (state.store.storeImages[storeName]) {
+    props.toast(
+      "ERROR",
+      "Note",
+      "Store already exists! Please choose a different name."
+    );
+    return;
+  }
+  if (!ethers.utils.isAddress(storeAddress)) {
+    props.toast(
+      "ERROR",
+      "Note",
+      "Store Address is not valid. Please try again!"
+    );
+    return;
+  }
   State.update({
     loading: true,
     loadingMsg: "Creating a new store",
     addSt: false,
   });
-  const { storeName, storeAddress, image } = state.storeInputs;
   nftContract.addStore(storeName, storeAddress, image.cid).then((t) => {
-    console.log(t);
     t.wait().then((r) => {
       State.update({
         store: {
@@ -251,13 +270,12 @@ const addStore = () => {
         loadingMsg: "",
       });
       if (storeAddress.toLowerCase() === sender) {
-        // alert(
-        //   "Warning - If you have any pending transactions, you won't be able to see them. But they can be completed at the store!"
-        // );
         State.update({
           store: { ...state.store, isStore: true, storeAddress, storeName },
         });
       }
+      updateBalance();
+      props.toast("SUCCESS", "Success", "Store Created Successfully");
     });
   });
 };
@@ -271,17 +289,30 @@ const getStoreAddress = (storeName) => {
 };
 
 const initTransaction = () => {
+  const { storeName, amount, name, password } = state.homeInputs;
+  if (storeName === "" || name === "" || !amount || password === "") {
+    props.toast("ERROR", "Note", "Please fill in all the details!");
+    return;
+  }
+  if (password.length < 8) {
+    props.toast("ERROR", "Note", "Password must contain atleast 8 characters!");
+    return;
+  }
+  if (amount <= 0) {
+    props.toast("ERROR", "Note", "Amount must be greater than 0");
+    return;
+  }
   State.update({
     newTxn: false,
     loading: true,
     loadingMsg: "Minting your NFT - Please Pay the gas price",
   });
-  const { storeName, amount, name, password } = state.homeInputs;
   walleyContract
     .mint(password, { from: sender })
     .then((tx) => {
       State.update({ loadingMsg: "Waiting for confirmation" });
       tx.wait().then((r) => {
+        updateBalance();
         const tokenId = parseInt(r.logs[2].data, 16);
         State.update({
           loadingMsg:
@@ -301,12 +332,17 @@ const initTransaction = () => {
             }
           )
           .then((txInit) => {
-            console.log(txInit);
             State.update({
               loadingMsg: "Waiting for the final confirmation",
             });
             txInit.wait().then((res) => {
-              console.log(res);
+              onTxInit();
+              updateBalance();
+              props.toast(
+                "SUCCESS",
+                "Success",
+                "Transaction Created Successfully"
+              );
               State.update({
                 loading: false,
                 loadingMsg: "",
@@ -319,13 +355,27 @@ const initTransaction = () => {
               });
             });
           })
-          .catch((err) => console.log(err));
+          .catch((err) => {
+            State.update({
+              loading: false,
+              loadingMsg: "",
+            });
+          });
       });
     })
-    .catch((err) => console.log(err));
+    .catch((err) => {
+      State.update({
+        loading: false,
+        loadingMsg: "",
+      });
+    });
 };
 
 const cancelTransaction = (tokenId) => {
+  if (state.user.transactionPassword < 8) {
+    props.toast("ERROR", "Note", "Password must contain atleast 8 characters!");
+    return;
+  }
   checkPassword(tokenId, state.user.transactionPassword, () => {
     State.update({
       user: { ...state.user, viewTxn: [] },
@@ -336,29 +386,67 @@ const cancelTransaction = (tokenId) => {
       .cancelTransaction(walleyAddress, tokenId, { from: sender })
       .then((tx) => {
         State.update({ loadingMsg: "Refunding your amount" });
-        tx.wait().then((r) => {
-          const tmp = [];
-          state.user.userPendingTransactions.map((trans) => {
-            if (parseInt(trans[1], 16) !== tokenId) {
-              tmp.push(trans);
-            }
+        tx.wait()
+          .then((r) => {
+            updateBalance();
+            props.toast(
+              "SUCCESS",
+              "Success",
+              "Amount refunded to your account successfully!"
+            );
+            const tmp = [];
+            state.user.userPendingTransactions.map((trans) => {
+              if (parseInt(trans[1], 16) !== tokenId) {
+                tmp.push(trans);
+              }
+            });
+            State.update({
+              loading: false,
+              loadingMsg: "",
+              user: {
+                ...state.user,
+                userPendingTransactions: tmp,
+                transactionPassword: "",
+                viewTxn: [],
+              },
+            });
+          })
+          .catch((err) => {
+            props.toast(
+              "ERROR",
+              "Note",
+              "You must buy at least 1 NFT to use transferred NFTs"
+            );
+
+            State.update({
+              loading: false,
+              loadingMsg: "",
+            });
           });
-          State.update({
-            loading: false,
-            loadingMsg: "",
-            user: {
-              ...state.user,
-              userPendingTransactions: tmp,
-              transactionPassword: "",
-              viewTxn: [],
-            },
-          });
+      })
+      .catch((err) => {
+        props.toast(
+          "ERROR",
+          "Note",
+          "You must buy at least 1 NFT to use transferred NFTs"
+        );
+        State.update({
+          loading: false,
+          loadingMsg: "",
         });
       });
   });
 };
 
-const approveTransaction = (tokenId) => {
+const approveTransaction = (tokenId, address) => {
+  if (state.store.totalAmount <= 0) {
+    props.toast("ERROR", "Note", "Amount must be greater than 0");
+    return;
+  }
+  if (state.store.approvePassword < 8) {
+    props.toast("ERROR", "Note", "Password must contain atleast 8 characters!");
+    return;
+  }
   checkPassword(tokenId, state.store.approvePassword, () => {
     State.update({
       user: { ...state.user, viewTxn: [] },
@@ -379,41 +467,64 @@ const approveTransaction = (tokenId) => {
         State.update({
           loadingMsg: "Waiting for confirmation - Refunding the change",
         });
-        tx.wait().then((res) => {
-          const tmp = [];
-          const tmpAct = [];
-          state.store.storePendingTransactions.map((trans) => {
-            if (parseInt(trans[1], 16) !== tokenId) {
-              tmp.push(trans);
-            } else {
-              tmpAct.push(trans);
-              tmpAct[0][7] = state.store.bill.cid;
-              tmpAct[0][8] = true;
-              tmpAct[0][9] = state.store.totalAmount;
-            }
+        tx.wait()
+          .then((res) => {
+            updateBalance();
+            props.toast(
+              "SUCCESS",
+              "Success",
+              "Transaction has been completed successfully!"
+            );
+            storeTxn(address);
+            State.update({
+              store: {
+                ...state.store,
+                approvePassword: "",
+                bill: { uploading: false, amount: null },
+                totalAmount: 0,
+              },
+              user: { ...state.user, viewTxn: [] },
+              loadingMsg: "",
+              loading: false,
+            });
+          })
+          .catch((err) => {
+            props.toast(
+              "ERROR",
+              "Note",
+              "You must buy at least 1 NFT to use transferred NFTs"
+            );
+
+            State.update({
+              loading: false,
+              loadingMsg: "",
+            });
           });
-          State.update({
-            store: {
-              ...state.store,
-              storePendingTransactions: tmp,
-              storePastTransactions: [
-                ...state.store.storePastTransactions,
-                tmpAct,
-              ],
-              approvePassword: "",
-              bill: { uploading: false, amount: null },
-              totalAmount: 0,
-            },
-            user: { ...state.user, viewTxn: [] },
-            loadingMsg: "",
-            loading: false,
-          });
+      })
+      .catch((err) => {
+        props.toast(
+          "ERROR",
+          "Note",
+          "You must buy at least 1 NFT to use transferred NFTs"
+        );
+
+        State.update({
+          loading: false,
+          loadingMsg: "",
         });
       });
   });
 };
 
 const transferToken = (tokenId) => {
+  if (state.user.transactionPassword < 8) {
+    props.toast("ERROR", "Note", "Password must contain atleast 8 characters!");
+    return;
+  }
+  if (!ethers.utils.isAddress(state.user.transferTo)) {
+    props.toast("ERROR", "Note", "Enter a valid address!");
+    return;
+  }
   checkPassword(tokenId, state.user.transactionPassword, () => {
     State.update({
       user: { ...state.user, viewTxn: [] },
@@ -428,38 +539,114 @@ const transferToken = (tokenId) => {
         State.update({
           loadingMsg: "Waiting for confirmation",
         });
-        tx.wait().then((res) => {
-          State.update({
-            user: {
-              ...state.user,
-              userPendingTransactions:
-                state.user.userPendingTransactions.filter(
-                  (tx) => parseInt(tx[1], 16) !== tokenId
-                ),
-              viewTxn: [],
-              transferTo: "",
-            },
-            loading: false,
-            loadingMsg: "",
+        tx.wait()
+          .then((res) => {
+            updateBalance();
+            props.toast(
+              "SUCCESS",
+              "Success",
+              "NFT has been transferred successfully"
+            );
+            State.update({
+              user: {
+                ...state.user,
+                userPendingTransactions:
+                  state.user.userPendingTransactions.filter(
+                    (tx) => parseInt(tx[1], 16) !== tokenId
+                  ),
+                viewTxn: [],
+                transferTo: "",
+              },
+              loading: false,
+              loadingMsg: "",
+            });
+          })
+          .catch((err) => {
+            props.toast(
+              "ERROR",
+              "Note",
+              "You must buy at least 1 NFT to use transferred NFTs"
+            );
+
+            State.update({
+              loading: false,
+              loadingMsg: "",
+            });
           });
+      })
+      .catch((err) => {
+        props.toast(
+          "ERROR",
+          "Note",
+          "You must buy at least 1 NFT to use transferred NFTs"
+        );
+
+        State.update({
+          loading: false,
+          loadingMsg: "",
         });
       });
   });
 };
 
 const checkPassword = (tokenId, password, fn) => {
-  walleyContract
-    .checkPassword(tokenId, password)
-    .then((check) => {
-      if (check) {
-        console.log("heheheh");
-        fn();
-      } else console.log("incorrect password");
-    })
-    .catch((err) => console.log(err));
+  walleyContract.checkPassword(tokenId, password).then((check) => {
+    if (check) {
+      fn();
+    } else props.toast("ERROR", "Note", "Please enter the correct passsword");
+  });
 };
-console.log(state.user.viewTxn[11]);
-console.log(state.user.viewTxn[11]);
+
+const getTable = (txn, store) => {
+  console.log(txn);
+  if (txn !== undefined) {
+    return (
+      <table className="table text-white">
+        <tbody>
+          <tr>
+            <td>Name</td>
+            <td>{txn[2]}</td>
+          </tr>
+          <tr>
+            <td>Store Name</td>
+            <td>{txn[6]}</td>
+          </tr>
+          {store ? (
+            <>
+              <tr>
+                <td>Max Allowance</td>
+                <td>
+                  {parseFloat(Big(txn[5]).div(Big(10).pow(18)).toFixed(5))} ETH
+                </td>
+              </tr>
+              <tr>
+                <td>Total Bill Amount</td>
+                <td>
+                  {parseFloat(Big(txn[9]).div(Big(10).pow(18)).toFixed(5))} ETH
+                </td>
+              </tr>
+            </>
+          ) : (
+            <tr>
+              <td>Allowance</td>
+              <td>
+                {parseFloat(Big(txn[5]).div(Big(10).pow(18)).toFixed(5))} ETH
+              </td>
+            </tr>
+          )}
+          <tr>
+            <td>Processing Time</td>
+            <td>
+              {unixToDate(Big(txn[10]).toFixed(0)).split(",")[0]} <br />{" "}
+              {unixToDate(Big(txn[10]).toFixed(0)).split(",")[1]}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    );
+  } else return "";
+};
+
 return (
   <Styles.WalleyHomeContainer>
     <Styles.WalleyHomeHeader>
@@ -503,10 +690,7 @@ return (
               />
             </Styles.WalleyImageContainer>
             <Styles.TransactionCardMain>
-              <p>Name - {state.user.viewTxn[2]}</p>
-              <p>Store name - {state.user.viewTxn[6]} </p>
-              <p>Amount - {Big(state.user.viewTxn[5]).toFixed(5)}</p>
-              <p>Time - {unixToDate(parseInt(state.user.viewTxn[10], 16))}</p>
+              {getTable(state.user.viewTxn, false)}
               {state.user.viewTxn[11] === "cancel" ? (
                 <>
                   <Styles.WalleyLabel>
@@ -524,30 +708,30 @@ return (
                       })
                     }
                   />
-                  <Styles.WalleyButton
-                    color="white"
-                    bg="blue"
-                    onClick={() =>
-                      State.update({
-                        user: {
-                          ...state.user,
-                          viewTxn: [],
-                          transactionPassword: "",
-                        },
-                      })
-                    }
-                  >
-                    Close
-                  </Styles.WalleyButton>
-                  <Styles.WalleyButton
-                    color="white"
-                    bg="red"
-                    onClick={() =>
-                      cancelTransaction(parseInt(state.user.viewTxn[1], 16))
-                    }
-                  >
-                    Cancel
-                  </Styles.WalleyButton>
+                  <Styles.WalleyButtonRow>
+                    <Styles.WalleyButton
+                      className="grey"
+                      onClick={() =>
+                        State.update({
+                          user: {
+                            ...state.user,
+                            viewTxn: [],
+                            transactionPassword: "",
+                          },
+                        })
+                      }
+                    >
+                      Close
+                    </Styles.WalleyButton>
+                    <Styles.WalleyButton
+                      className="red"
+                      onClick={() =>
+                        cancelTransaction(parseInt(state.user.viewTxn[1], 16))
+                      }
+                    >
+                      Cancel
+                    </Styles.WalleyButton>
+                  </Styles.WalleyButtonRow>
                 </>
               ) : state.user.viewTxn[11] === "transfer" ? (
                 <>
@@ -556,7 +740,6 @@ return (
                   </Styles.WalleyLabel>
                   <Styles.WalleyInput
                     type="password"
-                    placeholder="Enter the transaction password"
                     value={state.user.transactionPassword}
                     onChange={(e) =>
                       State.update({
@@ -573,7 +756,6 @@ return (
                   <Styles.WalleyInput
                     type="text"
                     value={state.user.transferTo}
-                    placeholder="Receiver's Address"
                     onChange={(e) =>
                       State.update({
                         user: {
@@ -583,30 +765,30 @@ return (
                       })
                     }
                   />
-                  <Styles.WalleyButton
-                    color="white"
-                    bg="blue"
-                    onClick={() =>
-                      State.update({
-                        user: {
-                          ...state.user,
-                          viewTxn: [],
-                          transactionPassword: "",
-                        },
-                      })
-                    }
-                  >
-                    Close
-                  </Styles.WalleyButton>
-                  <Styles.WalleyButton
-                    color="white"
-                    bg="red"
-                    onClick={() =>
-                      transferToken(parseInt(state.user.viewTxn[1], 16))
-                    }
-                  >
-                    Transfer
-                  </Styles.WalleyButton>
+                  <Styles.WalleyButtonRow>
+                    <Styles.WalleyButton
+                      className="grey"
+                      onClick={() =>
+                        State.update({
+                          user: {
+                            ...state.user,
+                            viewTxn: [],
+                            transactionPassword: "",
+                          },
+                        })
+                      }
+                    >
+                      Close
+                    </Styles.WalleyButton>
+                    <Styles.WalleyButton
+                      className="orange"
+                      onClick={() =>
+                        transferToken(parseInt(state.user.viewTxn[1], 16))
+                      }
+                    >
+                      Transfer
+                    </Styles.WalleyButton>
+                  </Styles.WalleyButtonRow>
                 </>
               ) : state.user.viewTxn[11] === "approve" ? (
                 <>
@@ -639,37 +821,38 @@ return (
                       })
                     }
                   />
-                  <Styles.WalleyButton
-                    color="white"
-                    bg="blue"
-                    onClick={() => {
-                      State.update({
-                        store: {
-                          ...state.store,
-                          approvePassword: "",
-                          bill: { uploading: false, cid: "" },
-                          totalAmount: null,
-                        },
-                        user: { ...state.user, viewTxn: [] },
-                      });
-                    }}
-                  >
-                    Close
-                  </Styles.WalleyButton>
-                  <Styles.WalleyButton
-                    color="white"
-                    bg="blue"
-                    onClick={() => {
-                      console.log(state.store.bill.cid);
-                      if (state.store.bill.cid) {
-                        approveTransaction(parseInt(state.user.viewTxn[1], 16));
-                      } else {
-                        console.log("Please Upload the bill");
-                      }
-                    }}
-                  >
-                    Approve
-                  </Styles.WalleyButton>
+                  <Styles.WalleyButtonRow>
+                    <Styles.WalleyButton
+                      className="grey"
+                      onClick={() => {
+                        State.update({
+                          store: {
+                            ...state.store,
+                            approvePassword: "",
+                            bill: { uploading: false, cid: "" },
+                            totalAmount: null,
+                          },
+                          user: { ...state.user, viewTxn: [] },
+                        });
+                      }}
+                    >
+                      Close
+                    </Styles.WalleyButton>
+                    <Styles.WalleyButton
+                      className="orange"
+                      onClick={() => {
+                        if (state.store.bill.cid) {
+                          approveTransaction(
+                            parseInt(state.user.viewTxn[1], 16),
+                            state.user.viewTxn[3]
+                          );
+                        } else {
+                        }
+                      }}
+                    >
+                      Approve
+                    </Styles.WalleyButton>
+                  </Styles.WalleyButtonRow>
                 </>
               ) : (
                 ""
@@ -683,47 +866,6 @@ return (
       {!state.store.isStore ? (
         <>
           <Styles.WalleyNavbar>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              id="menu"
-            >
-              <g data-name="Layer 2">
-                <g data-name="menu-2">
-                  <rect
-                    width="24"
-                    height="24"
-                    opacity="0"
-                    transform="rotate(180 12 12)"
-                  ></rect>
-                  <circle cx="0" cy="12" r="1"></circle>
-                  <rect
-                    width="14"
-                    height="2"
-                    x="3"
-                    y="11"
-                    rx=".94"
-                    ry=".94"
-                  ></rect>
-                  <rect
-                    width="18"
-                    height="2"
-                    x="0"
-                    y="16"
-                    rx=".94"
-                    ry=".94"
-                  ></rect>
-                  <rect
-                    width="18"
-                    height="2"
-                    x="0"
-                    y="6"
-                    rx=".94"
-                    ry=".94"
-                  ></rect>
-                </g>
-              </g>
-            </svg>
             <Styles.NavLine></Styles.NavLine>
             <Styles.WalleyNavbarButton
               onClick={() => State.update({ view: "home" })}
@@ -736,7 +878,14 @@ return (
             </Styles.WalleyNavbarButton>
             <Styles.NavLine></Styles.NavLine>
             <Styles.WalleyNavbarButton
-              onClick={() => State.update({ addSt: true })}
+              onClick={() => {
+                props.toast(
+                  "INFO",
+                  "Note",
+                  "If you have any pending transactions, you won't be able to see them. But they can be completed at the store!"
+                );
+                State.update({ addSt: true });
+              }}
             >
               <span>Add a store</span>
             </Styles.WalleyNavbarButton>
@@ -744,14 +893,7 @@ return (
           </Styles.WalleyNavbar>
           <Styles.WalleyHomeBody>
             {state.newTxn ? (
-              <Styles.WalleyHomeOverlay
-                id="overlay"
-                onClick={(e) => {
-                  if ("overlay" === e.target.id) {
-                    State.update({ newTxn: false });
-                  }
-                }}
-              >
+              <Styles.WalleyHomeOverlay>
                 <Styles.WalleyHomeForm>
                   <Styles.WalleyLabel>Select a Store</Styles.WalleyLabel>
                   <Widget
@@ -770,13 +912,12 @@ return (
                     }}
                   />
                   <Styles.WalleyLabel>
-                    Enter the maximum amount you'd like to spend(in INR)
+                    Enter the maximum amount you'd like to spend(in ETH)
                   </Styles.WalleyLabel>
                   <Styles.WalleyInput
                     value={state.homeInputs.amount}
                     type="number"
                     onChange={(e) => homeInputUpdates(e.target.value, "amount")}
-                    placeholder="Amount(in INR)"
                   />
                   <Styles.WalleyLabel>
                     Name(will be asked at the store)
@@ -785,7 +926,6 @@ return (
                     value={state.homeInputs.name}
                     type="text"
                     onChange={(e) => homeInputUpdates(e.target.value, "name")}
-                    placeholder="Name"
                   />
                   <Styles.WalleyLabel>
                     Set a password for the transaction(will be asked during
@@ -797,15 +937,21 @@ return (
                     onChange={(e) =>
                       homeInputUpdates(e.target.value, "password")
                     }
-                    placeholder="Password"
                   />
-                  <Styles.WalleyButton
-                    color="#fff"
-                    bg="#FFA500"
-                    onClick={initTransaction}
-                  >
-                    Buy The Store NFT
-                  </Styles.WalleyButton>
+                  <Styles.WalleyButtonRow>
+                    <Styles.WalleyButton
+                      className="grey"
+                      onClick={() => State.update({ newTxn: false })}
+                    >
+                      Cancel
+                    </Styles.WalleyButton>
+                    <Styles.WalleyButton
+                      className="orange"
+                      onClick={initTransaction}
+                    >
+                      Buy The Store NFT
+                    </Styles.WalleyButton>
+                  </Styles.WalleyButtonRow>
                 </Styles.WalleyHomeForm>
               </Styles.WalleyHomeOverlay>
             ) : (
@@ -821,7 +967,6 @@ return (
                     onChange={(e) => {
                       storeInputUpdates(e.target.value, "storeName");
                     }}
-                    placeholder="Enter the Store Name"
                   />
                   <Styles.WalleyLabel>Store Address</Styles.WalleyLabel>
                   <Styles.WalleyInput
@@ -830,7 +975,6 @@ return (
                     onChange={(e) =>
                       storeInputUpdates(e.target.value, "storeAddress")
                     }
-                    placeholder="Enter the Store Address"
                   />
                   <Styles.WalleyStoreButton
                     onClick={() => storeInputUpdates(sender, "storeAddress")}
@@ -839,20 +983,17 @@ return (
                   </Styles.WalleyStoreButton>
                   <Styles.WalleyLabel>Add Cover Image</Styles.WalleyLabel>
                   <IpfsImageUpload image={state.storeInputs.image} />
-                  <Styles.WalleyButton
-                    color="#fff"
-                    bg="#FA9703"
-                    onClick={addStore}
-                  >
-                    Add Store
-                  </Styles.WalleyButton>
-                  <Styles.WalleyButton
-                    color="#fff"
-                    bg="#FA9703"
-                    onClick={() => State.update({ addSt: false })}
-                  >
-                    Cancel
-                  </Styles.WalleyButton>
+                  <Styles.WalleyButtonRow>
+                    <Styles.WalleyButton
+                      className="grey"
+                      onClick={() => State.update({ addSt: false })}
+                    >
+                      Cancel
+                    </Styles.WalleyButton>
+                    <Styles.WalleyButton className="orange" onClick={addStore}>
+                      Add Store
+                    </Styles.WalleyButton>
+                  </Styles.WalleyButtonRow>
                 </Styles.WalleyStoreForm>
               </Styles.WalleyStoreOverlay>
             ) : (
@@ -862,8 +1003,7 @@ return (
               <>
                 <Styles.WalleySearch>
                   <Styles.WalleyButton
-                    bg="#424242"
-                    color="white"
+                    className="orange"
                     onClick={() => State.update({ newTxn: true })}
                   >
                     Buy New NFT
@@ -878,33 +1018,32 @@ return (
                     placeholder="Search Transactions by Store Name"
                   />
                 </Styles.WalleySearch>
-                <p className="txn">Your Transactions</p>
+                <p className="txn" className="txn">
+                  Your Transactions
+                </p>
                 <Styles.WalleyTransactions>
-                  {state.user.userPendingTransactions.length !== 0
-                    ? state.user.userPendingTransactions
-                        .filter((tx) =>
-                          tx[6]
-                            .toLowerCase()
-                            .includes(state.search.store.toLowerCase())
-                        )
-                        .map((tx) => (
-                          <Styles.TransactionCard>
-                            <Styles.WalleyImageContainer>
-                              <Styles.WalleyStoreImage
-                                src={`https://ipfs.near.social/ipfs/${
-                                  state.store.storeImages[tx[6]]
-                                }`}
-                                alt={tx[6]}
-                              />
-                            </Styles.WalleyImageContainer>
-                            <Styles.TransactionCardMain>
-                              <p>Name - {tx[2]}</p>
-                              <p>Store name - {tx[6]} </p>
-                              <p>Amount - {Big(tx[5]).toFixed(5)}</p>
-                              <p>Time - {unixToDate(parseInt(tx[10], 16))}</p>
+                  {state.user.userPendingTransactions.length !== 0 ? (
+                    state.user.userPendingTransactions
+                      .filter((tx) =>
+                        tx[6]
+                          .toLowerCase()
+                          .includes(state.search.store.toLowerCase())
+                      )
+                      .map((tx) => (
+                        <Styles.TransactionCard>
+                          <Styles.WalleyImageContainer>
+                            <Styles.WalleyStoreImage
+                              src={`https://ipfs.near.social/ipfs/${
+                                state.store.storeImages[tx[6]]
+                              }`}
+                              alt={tx[6]}
+                            />
+                          </Styles.WalleyImageContainer>
+                          <Styles.TransactionCardMain>
+                            {getTable(tx, false)}
+                            <Styles.WalleyButtonRow>
                               <Styles.WalleyButton
-                                color="white"
-                                bg="red"
+                                className="grey"
                                 onClick={() =>
                                   State.update({
                                     user: {
@@ -918,8 +1057,7 @@ return (
                                 Transfer
                               </Styles.WalleyButton>
                               <Styles.WalleyButton
-                                color="white"
-                                bg="red"
+                                className="red"
                                 onClick={() =>
                                   State.update({
                                     user: {
@@ -932,18 +1070,20 @@ return (
                               >
                                 Cancel
                               </Styles.WalleyButton>
-                            </Styles.TransactionCardMain>
-                          </Styles.TransactionCard>
-                        ))
-                    : "No pending transactions found"}
+                            </Styles.WalleyButtonRow>
+                          </Styles.TransactionCardMain>
+                        </Styles.TransactionCard>
+                      ))
+                  ) : (
+                    <p>No pending transactions found</p>
+                  )}
                 </Styles.WalleyTransactions>
               </>
             ) : state.view === "txPast" ? (
               <>
                 <Styles.WalleySearch>
                   <Styles.WalleyButton
-                    bg="#424242"
-                    color="white"
+                    className="orange"
                     onClick={() => State.update({ newTxn: true })}
                   >
                     Buy New NFT
@@ -958,74 +1098,71 @@ return (
                     placeholder="Search Transactions by Store Name"
                   />
                 </Styles.WalleySearch>
-                <p className="txn">Your Receipts</p>
+                <p className="txn" className="txn">
+                  Your Receipts
+                </p>
                 <Styles.WalleyTransactions>
-                  {state.user.userPastTransactions.length !== 0
-                    ? state.user.userPastTransactions
-                        .filter((tx) =>
-                          tx[6]
-                            .toLowerCase()
-                            .includes(state.search.store.toLowerCase())
-                        )
-                        .map((tx) => (
-                          <Styles.TransactionCard>
-                            <Styles.WalleyImageContainer>
-                              <Styles.WalleyStoreImage
-                                src={`https://ipfs.near.social/ipfs/${
-                                  state.store.storeImages[tx[6]]
-                                }`}
-                                alt={tx[6]}
-                              />
-                            </Styles.WalleyImageContainer>
-                            <Styles.TransactionCardMain>
-                              <p>Name - {tx[2]}</p>
-                              <p>Store name - {tx[6]} </p>
-                              <p>Max Amount - {Big(tx[5]).toFixed(5)}</p>
-                              <p>Total Bill Amount - {Big(tx[9]).toFixed(5)}</p>
-
-                              <p>Time - {unixToDate(parseInt(tx[10], 16))}</p>
-                              {state.user.openReceipt ===
-                              Big(tx[1]).toFixed(0) ? (
-                                <>
-                                  <Styles.WalleyStoreImage
-                                    src={`https://ipfs.near.social/ipfs/${tx[7]}`}
-                                    alt={tx[7]}
-                                  />
-                                  <Styles.WalleyButton
-                                    color="#fff"
-                                    bg="#FA9703"
-                                    onClick={() =>
-                                      State.update({
-                                        user: {
-                                          ...state.user,
-                                          openReceipt: 0,
-                                        },
-                                      })
-                                    }
-                                  >
-                                    Close Receipt
-                                  </Styles.WalleyButton>
-                                </>
-                              ) : (
+                  {state.user.userPastTransactions.length !== 0 ? (
+                    state.user.userPastTransactions
+                      .filter((tx) =>
+                        tx[6]
+                          .toLowerCase()
+                          .includes(state.search.store.toLowerCase())
+                      )
+                      .map((tx) => (
+                        <Styles.TransactionCard>
+                          <Styles.WalleyImageContainer>
+                            <Styles.WalleyStoreImage
+                              src={`https://ipfs.near.social/ipfs/${
+                                state.store.storeImages[tx[6]]
+                              }`}
+                              alt={tx[6]}
+                            />
+                          </Styles.WalleyImageContainer>
+                          <Styles.TransactionCardMain>
+                            {getTable(tx, true)}
+                            {state.user.openReceipt ===
+                            Big(tx[1]).toFixed(0) ? (
+                              <Styles.TransactionModal>
+                                <Styles.WalleyStoreImage
+                                  src={`https://ipfs.near.social/ipfs/${tx[7]}`}
+                                  alt={tx[7]}
+                                />
                                 <Styles.WalleyButton
-                                  color="#fff"
-                                  bg="#FA9703"
+                                  className="orange"
                                   onClick={() =>
                                     State.update({
                                       user: {
                                         ...state.user,
-                                        openReceipt: Big(tx[1]).toFixed(0),
+                                        openReceipt: 0,
                                       },
                                     })
                                   }
                                 >
-                                  Show Receipt
+                                  Close Receipt
                                 </Styles.WalleyButton>
-                              )}
-                            </Styles.TransactionCardMain>
-                          </Styles.TransactionCard>
-                        ))
-                    : "No past transactions found"}
+                              </Styles.TransactionModal>
+                            ) : (
+                              <Styles.WalleyButton
+                                className="orange"
+                                onClick={() =>
+                                  State.update({
+                                    user: {
+                                      ...state.user,
+                                      openReceipt: Big(tx[1]).toFixed(0),
+                                    },
+                                  })
+                                }
+                              >
+                                Show Receipt
+                              </Styles.WalleyButton>
+                            )}
+                          </Styles.TransactionCardMain>
+                        </Styles.TransactionCard>
+                      ))
+                  ) : (
+                    <p>No past transactions found</p>
+                  )}
                 </Styles.WalleyTransactions>
               </>
             ) : (
@@ -1036,12 +1173,6 @@ return (
       ) : (
         <>
           <Styles.WalleyNavbar>
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none">
-              <path
-                d="M42.3795 1.00041H3.49873C-0.658836 0.841665 -0.658836 7.16116 3.49873 7.00242H42.2245C46.3065 7.16116 46.4652 1.00041 42.3833 1.00041H42.3795ZM3.49873 25.0009C-0.500093 25.0009 -0.500093 30.9991 3.49873 30.9991H25.4204C29.5024 30.9991 29.5024 25.0009 25.4204 25.0009H3.49873ZM3.49873 49.0014C-0.500093 49.0014 -0.500093 54.9996 3.49873 54.9996H52.6222C56.621 54.9996 56.621 49.0014 52.6222 49.0014H3.49873Z"
-                fill="white"
-              />
-            </svg>
             <Styles.NavLine></Styles.NavLine>
             <Styles.WalleyNavbarButton
               onClick={() => State.update({ view: "home" })}
@@ -1057,23 +1188,32 @@ return (
             <Styles.NavLineLast></Styles.NavLineLast>
           </Styles.WalleyNavbar>
           <Styles.WalleyStoreBody>
-                <Styles.WalleySearch>
-                  <Styles.WalleyInput
-                    value={state.search.user}
-                    onChange={(e) =>
-                      State.update({
-                        search: { ...state.search, user: e.target.value },
-                      })
-                    }
-                    placeholder="Search Transactions by User Name"
-                  />
-                </Styles.WalleySearch>
+            <Styles.WalleySearch>
+              <Styles.WalleyInput
+                value={state.search.user}
+                onChange={(e) =>
+                  State.update({
+                    search: { ...state.search, user: e.target.value },
+                  })
+                }
+                placeholder="Search Transactions by User Name"
+              />
+            </Styles.WalleySearch>
+            {state.view === "home" ? (
+              <p className="txn">Pending Transactions(NFTs)</p>
+            ) : (
+              <p className="txn">Past Transactions</p>
+            )}
             <Styles.WalleyTransactions>
-              {state.view === "home"
-                ? state.store.storePendingTransactions.length !== 0
-                  ? state.store.storePendingTransactions.filter(tx => tx[6]
-                    .toLowerCase()
-                    .includes(state.search.store.toLowerCase())).map((tx) => (
+              {state.view === "home" ? (
+                state.store.storePendingTransactions.length !== 0 ? (
+                  state.store.storePendingTransactions
+                    .filter((tx) =>
+                      tx[2]
+                        .toLowerCase()
+                        .includes(state.search.user.toLowerCase())
+                    )
+                    .map((tx) => (
                       <Styles.TransactionCard>
                         <Styles.WalleyImageContainer>
                           <Styles.WalleyStoreImage
@@ -1084,14 +1224,9 @@ return (
                           />
                         </Styles.WalleyImageContainer>
                         <Styles.TransactionCardMain>
-                          <p>Name - {tx[2]}</p>
-                          <p>Store name - {tx[6]} </p>
-                          <p>Max amount - {Big(tx[5]).toFixed(5)}</p>
-
-                          <p>Time - {unixToDate(parseInt(tx[10], 16))}</p>
+                          {getTable(tx, false)}
                           <Styles.WalleyButton
-                            color="white"
-                            bg="blue"
+                            className="orange"
                             onClick={() =>
                               State.update({
                                 store: {
@@ -1112,11 +1247,17 @@ return (
                         </Styles.TransactionCardMain>
                       </Styles.TransactionCard>
                     ))
-                  : "No pending transactions"
-                : state.store.storePastTransactions.length !== 0
-                ? state.store.storePastTransactions.filter(tx => tx[6]
-                  .toLowerCase()
-                  .includes(state.search.store.toLowerCase())).map((tx) => (
+                ) : (
+                  <p>No pending transactions</p>
+                )
+              ) : state.store.storePastTransactions.length !== 0 ? (
+                state.store.storePastTransactions
+                  .filter((tx) =>
+                    tx[2]
+                      .toLowerCase()
+                      .includes(state.search.user.toLowerCase())
+                  )
+                  .map((tx) => (
                     <Styles.TransactionCard>
                       <Styles.WalleyImageContainer>
                         <Styles.WalleyStoreImage
@@ -1127,22 +1268,15 @@ return (
                         />
                       </Styles.WalleyImageContainer>
                       <Styles.TransactionCardMain>
-                        <p>Name - {tx[2]}</p>
-                        <p>Store name - {tx[6]} </p>
-                        <p>Max Amount - {Big(tx[5]).toFixed(5)}</p>
-
-                        <p>Total Bill Amount - {Big(tx[9]).toFixed(5)}</p>
-
-                        <p>Time - {unixToDate(parseInt(tx[10], 16))}</p>
+                        {getTable(tx, true)}
                         {state.user.openReceipt === Big(tx[1]).toFixed(0) ? (
-                          <>
+                          <Styles.TransactionModal>
                             <Styles.WalleyStoreImage
                               src={`https://ipfs.near.social/ipfs/${tx[7]}`}
                               alt={tx[7]}
                             />
                             <Styles.WalleyButton
-                              color="#fff"
-                              bg="#FA9703"
+                              className="orange"
                               onClick={() =>
                                 State.update({
                                   user: {
@@ -1154,11 +1288,10 @@ return (
                             >
                               Close Receipt
                             </Styles.WalleyButton>
-                          </>
+                          </Styles.TransactionModal>
                         ) : (
                           <Styles.WalleyButton
-                            color="#fff"
-                            bg="#FA9703"
+                            className="orange"
                             onClick={() =>
                               State.update({
                                 user: {
@@ -1174,7 +1307,9 @@ return (
                       </Styles.TransactionCardMain>
                     </Styles.TransactionCard>
                   ))
-                : "No past transactions found"}
+              ) : (
+                <p>No past transactions found</p>
+              )}
             </Styles.WalleyTransactions>
           </Styles.WalleyStoreBody>
         </>

@@ -17,9 +17,6 @@ contract Walley is ERC721URIStorage {
   }
   function checkPassword(uint256 tokenId, string memory password) public view returns(bool) {
     string memory pass = passwords[tokenId];
-    if (bytes(pass).length != bytes(password).length) {
-        return false;
-    }
     return keccak256(abi.encodePacked(pass)) == keccak256(abi.encodePacked(password));
   }
 
